@@ -2,10 +2,7 @@
 
 Reinforcement learning for spectrum access: radios deciding for themselves
 where to transmit, with no coordinator.
-
-Repo 4 of six in a DARPA Spectrum Collaboration Challenge project. Where
-[Frame-Oracle](https://github.com/jawadhasuna/Frame-Oracle) predicts whether a
-transmission will survive, Node-Parley uses that kind of judgement to *act*.
+predicts whether a transmission will survive, Node-Parley uses that kind of judgement to *act*.
 
 > Status: complete. Stages A, B, B+, B2 and C all done.
 
