@@ -1,0 +1,26 @@
+{
+  "static": {
+    "final": 1.0,
+    "ceiling": 1.0,
+    "floor": -0.011,
+    "fraction_of_gap": 1.0,
+    "distinct_actions": 3,
+    "states_visited": 6
+  },
+  "cyclic": {
+    "final": 1.0,
+    "ceiling": 1.0,
+    "floor": -0.00075,
+    "fraction_of_gap": 1.0,
+    "distinct_actions": 3,
+    "states_visited": 6
+  },
+  "random": {
+    "final": 0.10425,
+    "ceiling": 1.0,
+    "floor": 0.12,
+    "fraction_of_gap": -0.017897727272727273,
+    "distinct_actions": 4,
+    "states_visited": 10
+  }
+}
