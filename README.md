@@ -7,7 +7,7 @@ Repo 4 of six in a DARPA Spectrum Collaboration Challenge project. Where
 [Frame-Oracle](https://github.com/jawadhasuna/Frame-Oracle) predicts whether a
 transmission will survive, Node-Parley uses that kind of judgement to *act*.
 
-> Status: Stages A, B, B+ and B2 complete. ns-3 (Stage C) in progress.
+> Status: complete. Stages A, B, B+, B2 and C all done.
 
 ## Stage A: tabular Q-learning, written by hand
 
@@ -266,6 +266,96 @@ would be understood before a framework hid it; it turned out to also be why
 none of this friction could touch Stages A, B or B+, which run on NumPy and a
 table.
 
+## Stage C: ns-3, with real 802.11
+
+Stages A through B2 ran on environments where "two nodes on one channel" was
+a rule I wrote. Stage C replaces the rule with a simulator: ns-3.48, real
+CSMA/CA, backoff, propagation loss and Minstrel rate control. Three
+transmitter/receiver pairs share four non-overlapping 5 GHz channels, each
+step is an independent short simulation, and throughput is measured from bytes
+actually received.
+
+The Q-learning is the same update rule as `qlearning.py`, ported to C++ rather
+than bridged through ns3-gym or ns3-ai. Those bridges track ns-3 releases
+poorly, and thirty lines of C++ does not depend on a third party staying
+current.
+
+### Result: both reward rules reach the same policy
+
+```
+                    collaborative    selfish
+throughput             61.03 Mbps    61.03 Mbps
+shared channels             0.000        0.000
+channel use          [20,20,0,20]  [20,20,0,20]
+random assignment      ~41 Mbps
+```
+
+Three links, three distinct channels, zero contention, a 49% improvement over
+random. The training traces diverged along the way (step 50: 46.50 vs 45.03;
+step 175: 54.36 vs 61.78) before converging on the same policy, so this is
+genuine agreement rather than two identical runs.
+
+### Which resolves Stage B and Stage B+ into one story
+
+```
+Stage B    channel only, Gym rules      no difference between reward rules
+Stage B+   channel + MCS, Gym rules     collaborative wins by 0.662 (3.2 sigma)
+Stage C    channel only, real 802.11    no difference between reward rules
+```
+
+Stage C matches Stage B, and it should: its action space is channel only.
+Minstrel adapts the rate inside ns-3, so the node never chooses its modulation.
+
+**The wedge between selfish and collective interest requires MCS to be a
+decision.** When the action is only "which channel", a collision costs you as
+much as it costs everyone else, so selfish agents already want to spread out
+and the collaborative reward has nothing left to buy.
+
+Confirmed three independent ways now: a hand-written collision rule, a learned
+channel model from real Colosseum data, and a full 802.11 simulator.
+
+### It also validates the simplification
+
+The Gym environment said sharing is catastrophic -- both nodes get nothing.
+ns-3 says it costs about 30% of total throughput; both links survive.
+Different severity, same optimal policy. The hard collision rule was a
+harmless simplification for this question, which is worth having checked
+rather than assumed.
+
+### The bug that nearly passed
+
+The first working version reported that sharing a channel cost nothing:
+55.72 Mbps with one shared channel against 54.56 with none. Every number was
+plausible -- 55 Mbps is right for three 802.11a links -- and the learning
+curves moved.
+
+The cause was one line inside the per-link loop:
+
+```cpp
+phy.SetChannel(chanHelper.Create());   // a NEW channel, every link
+```
+
+Each link got its own `YansWifiChannel`, putting them in separate universes
+that could not hear each other. Channel *numbers* were being set on radios
+that were never on the same medium, so nothing ever contended and the reward
+rules were choosing between options with no consequences.
+
+One shared channel object fixed it, and sharing immediately cost 30%.
+
+The tell was not a wrong value but a missing RELATIONSHIP: under CSMA/CA,
+sharing a channel cannot be free. That is the same failure shape as the CFAR
+looks constant in Frame-Oracle, the oracle that could not see the future in
+Stage A, and the SNR-definition mismatch in Mod-Scope. Plausible numbers,
+broken relationship, and only visible if you check how the numbers relate to
+each other rather than whether each looks reasonable alone.
+
+### One open oddity
+
+The agents settle on channels 0, 1 and 3 -- skipping channel 2 (the 30 m
+link) in favour of channel 3 (45 m). Not obviously optimal. The throughput
+difference between those two may be small enough that either is a stable local
+optimum, but this has not been checked.
+
 ## Run it
 
 ```bash
@@ -278,6 +368,13 @@ uv run train_oracle.py          # channel + MCS, outcomes from the predictor
 
 uv run check_pz_env.py          # PettingZoo conformance + transparency
 uv run train_rllib.py           # PPO with a shared policy
+```
+
+Stage C needs ns-3 in WSL. See `ns3/README.md` for the build, then:
+
+```bash
+./ns3 run "spectrum-qlearning --episodes=300 --duration=0.3 --reward=collaborative"
+./ns3 run "spectrum-qlearning --episodes=300 --duration=0.3 --reward=selfish"
 ```
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12. CPU only; these are
@@ -299,11 +396,16 @@ tables, not networks.
 | `pz_env.py` | PettingZoo ParallelEnv wrapper |
 | `check_pz_env.py` | Conformance, transparency, and the dict-ordering trap |
 | `train_rllib.py` | RLlib PPO, both greedy and sampled evaluation |
+| `ns3/spectrum-qlearning.cc` | Stage C: the same problem in ns-3 with real 802.11 |
 
 ## Still to come
 
-- **Stage C:** ns-3. Committed, not optional -- see the project roadmap for
-  its definition of done.
+All five stages are done. Remaining ideas, none started:
+
+- Agent identity in the observation, so a shared RLlib policy can specialise.
+- MCS as an action in ns-3, which is where Stage B+ predicts the reward rules
+  would finally diverge under real physics.
+- Why the agents skip channel 2 in favour of channel 3.
 
 ## References
 
