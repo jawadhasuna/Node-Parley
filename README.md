@@ -7,8 +7,7 @@ Repo 4 of six in a DARPA Spectrum Collaboration Challenge project. Where
 [Frame-Oracle](https://github.com/jawadhasuna/Frame-Oracle) predicts whether a
 transmission will survive, Node-Parley uses that kind of judgement to *act*.
 
-> Status: Stages A, B and B+ complete, including the Frame-Oracle
-> channel model. PettingZoo/RLlib next. ns-3 (Stage C) committed.
+> Status: Stages A, B, B+ and B2 complete. ns-3 (Stage C) in progress.
 
 ## Stage A: tabular Q-learning, written by hand
 
@@ -181,6 +180,92 @@ So the +0.662 magnitude means little. What is robust is the mechanism:
 spreading out, near-zero collisions and the shift to higher MCS are directly
 observed and do not depend on those constants being right.
 
+## Stage B2: PettingZoo and RLlib, and what symmetry costs
+
+The environment is wrapped as a PettingZoo `ParallelEnv` (ParallelEnv, not
+AECEnv: radios transmit in the same slot, they do not take turns) and trained
+with Ray RLlib's PPO using a shared policy across the three identical nodes --
+standard parameter sharing.
+
+`check_pz_env.py` verifies three things: PettingZoo's own conformance test,
+that the wrapper reproduces the raw environment's rewards exactly from the
+same seed, and that building the action dict in a different order does not
+change the outcome. That last one guards a bug that would run perfectly and be
+completely wrong -- indexing actions by position rather than agent name would
+silently apply node 2's choice to node 0.
+
+### Result: a shared policy cannot solve this
+
+```
+                    greedy   sampled   tabular Q
+throughput           0.545     2.079       3.320
+collisions/step      1.000     0.796
+channel use    [3000,3000,0,0]   [2417,2499,906,178]
+```
+
+**Greedy evaluation collapses completely.** All three nodes share one policy
+AND receive an identical observation (aggregate occupancy is the same array
+for everyone), so a deterministic policy produces the SAME action for all
+three. They stack on one channel and jam each other on every step. The
+`[3000, 3000, 0, 0]` split is the policy switching between two channels
+depending on observation -- with all three nodes switching together.
+
+Greedy evaluation is correct everywhere else in this project. Here it strips
+out the only mechanism the agents had for differing: the sampling PPO trains
+with. Both modes are therefore reported.
+
+**Sampling recovers most of it but cannot reach the Q-table**, and that ceiling
+is structural rather than a tuning failure. A shared policy must emit the same
+action distribution for every node, so it cannot assign roles -- only randomise
+and hope. Three nodes choosing independently from four channels land on
+distinct ones just
+
+```
+(4 x 3 x 2) / 4^3 = 24/64 = 37.5% of the time
+```
+
+Independent Q-learners have no such limit. Each holds its own table, so one
+learns "I take channel 0" and another "I take channel 1" -- genuine role
+specialisation, reached with no communication, purely because three separate
+exploration histories diverged.
+
+**So parameter sharing, the standard recommendation for identical agents, is
+strictly less capable here.** It is more sample-efficient and cannot solve the
+problem. The cause is symmetry, not PPO.
+
+### The fix, named but not tested
+
+Add each agent's own identity to its observation:
+
+```
+[occupancy..., am_I_node_0, am_I_node_1, am_I_node_2]
+```
+
+A shared policy can then tell the nodes apart and assign them different
+channels, recovering role specialisation while keeping shared weights. This is
+a standard technique and would very likely close the gap. It is not
+implemented here, and the results above should be read as "shared policy
+without agent identity", not as a limit on RLlib or on PPO.
+
+### Three tooling constraints worth recording
+
+RLlib blocked this stage three times, none of them bugs in this code:
+
+1. **It hard-pins gymnasium to an exact version** -- not a range. Every RLlib
+   release requires one specific gymnasium, so the project had to pin
+   `gymnasium==1.2.2` and cap `requires-python < 3.14` (Ray publishes no
+   wheels above 3.13).
+2. **`local_mode` was removed** in Ray 2.58.
+3. **No default encoder for `MultiBinary` observation spaces.** The PettingZoo
+   wrapper exposes `Box(0, 1)` instead -- identical data, a space RLlib can
+   build a network for.
+
+Every one of these would have blocked Stage A entirely had the roadmap not put
+hand-written Q-learning first. That ordering was chosen so the update rule
+would be understood before a framework hid it; it turned out to also be why
+none of this friction could touch Stages A, B or B+, which run on NumPy and a
+table.
+
 ## Run it
 
 ```bash
@@ -190,6 +275,9 @@ uv run train_stage_b.py    # three agents, two scoring rules, 8 seeds each
 # needs Frame-Oracle's ONNX export next door
 uv run check_channel_model.py   # is the channel model a real decision?
 uv run train_oracle.py          # channel + MCS, outcomes from the predictor
+
+uv run check_pz_env.py          # PettingZoo conformance + transparency
+uv run train_rllib.py           # PPO with a shared policy
 ```
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12. CPU only; these are
@@ -208,10 +296,12 @@ tables, not networks.
 | `check_channel_model.py` | Verifies the model presents a real decision |
 | `oracle_env.py` | Channel + MCS actions, outcomes from the predictor |
 | `train_oracle.py` | Stage B+ across 5 seeds, both reward rules |
+| `pz_env.py` | PettingZoo ParallelEnv wrapper |
+| `check_pz_env.py` | Conformance, transparency, and the dict-ordering trap |
+| `train_rllib.py` | RLlib PPO, both greedy and sampled evaluation |
 
 ## Still to come
 
-- **Stage B2:** PettingZoo, then Ray RLlib.
 - **Stage C:** ns-3. Committed, not optional -- see the project roadmap for
   its definition of done.
 

@@ -3,10 +3,29 @@ name = "node-parley"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
-    "gymnasium>=1.3.0",
+    "gymnasium==1.2.2",
     "matplotlib>=3.11.1",
     "numpy>=2.5.2",
     "onnxruntime>=1.29.0",
+    "pettingzoo>=1.27.0",
+    "ray[rllib]>=2.58.0",
+    "torch>=2.13.0",
 ]
+
+# RLlib hard-pins gymnasium to one exact release (1.2.2 as of ray 2.58), so
+# this project pins it too rather than floating ahead. requires-python is
+# capped below 3.14 because Ray publishes no wheels there and uv resolves
+# across every version the project claims to support.
+
+# RLlib needs a deep-learning framework and has no default. Using the same
+# CUDA index as the other repos means torch hardlinks from uv's cache rather
+# than downloading a separate CPU wheel.
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]
